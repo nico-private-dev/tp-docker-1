@@ -3,6 +3,8 @@ FROM alpine:latest
 
 RUN apk add --no-cache openssh git docker-cli docker-compose
 
+ARG USER=root
+ARG PASSWORD=root
 RUN echo "${USER}:${PASSWORD}" | chpasswd
 
 # Configuration minimale de SSHD, pas adapté à un contexte de prod.

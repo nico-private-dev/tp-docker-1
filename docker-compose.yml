@@ -15,9 +15,44 @@ services:
   plateforme:
     build:
       context: ./services/plateforme
+      args:
+        - USER=root
+        - PASSWORD=root 
     container_name: plateforme
     restart: unless-stopped
     ports:
       - "2222:22"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+  
+  jenkins:
+    build:
+      context: ./services/jenkins
+    container_name: jenkins
+    restart: unless-stopped
+    environment:
+      - JENKINS_OPTS=--httpPort=80
+    ports:
+      - "8080:80"
+    volumes:
+      - jenkins_data:/var/jenkins_home
+
+  gitea:
+    image: gitea/gitea:latest
+    container_name: gitea
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      - GITEA__server__HTTP_PORT=80
+      - GITEA__server__PROTOCOL=http
+      - GITEA__server__DOMAIN=gitea
+      - GITEA__server__ROOT_URL=http://gitea
+      - GITEA__server__LOCAL_ROOT_URL=http://gitea
+      - GITEA__webhook__ALLOWED_HOST_LIST=jenkins
+    volumes:
+      - gitea_data:/var/lib/gitea
+
+volumes:
+  jenkins_data:
+  gitea_data:
