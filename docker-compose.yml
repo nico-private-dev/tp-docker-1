@@ -1,0 +1,13 @@
+services:
+  desktop: # Nom du premier service
+    build: 
+      context: ./services/Desktop
+    container_name: desktop
+    restart: unless-stopped
+    ports:
+      - "80:80" # Mappage des ports
+    environment:
+      - USER=${USER}
+      - PASSWORD=${PASSWORD}
+    volumes:
+      - ./services/Desktop:/app # Mappage de volumes
