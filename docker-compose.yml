@@ -10,7 +10,7 @@ services:
       - USER=${USER}
       - PASSWORD=${PASSWORD}
     volumes:
-      - ./services/Desktop:/app # Mappage de volumes
+      - ./services/Desktop:/home/nicolasf/app # Mappage de volumes
   
   plateforme:
     build:
@@ -52,6 +52,22 @@ services:
       - GITEA__webhook__ALLOWED_HOST_LIST=jenkins
     volumes:
       - gitea_data:/data
+
+  jenkins-docker-agent:
+    build: 
+      context: ./services/jenkins-docker-agent
+    privileged: true
+    container_name: jenkins-docker-agent
+    environment:
+      - JENKINS_URL=http://jenkins
+      - JENKINS_AGENT_NAME=docker-agent
+      - JENKINS_AGENT_WORKDIR=/home/jenkins/agent
+      - JENKINS_SECRET=e136834d6d3c7e449a40002b76867894f1e41e45c1f1a8d51cca00d195bcda8d
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - jenkins
+    restart: unless-stopped
 
 volumes:
   jenkins_data:
