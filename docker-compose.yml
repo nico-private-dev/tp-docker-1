@@ -48,10 +48,10 @@ services:
       - GITEA__server__PROTOCOL=http
       - GITEA__server__DOMAIN=gitea
       - GITEA__server__ROOT_URL=http://gitea
-      - GITEA__server__LOCAL_ROOT_URL=http://gitea
+      - GITEA__server__LOCAL_ROOT_URL=http://gitea/
       - GITEA__webhook__ALLOWED_HOST_LIST=jenkins
     volumes:
-      - gitea_data:/var/lib/gitea
+      - gitea_data:/data
 
 volumes:
   jenkins_data:

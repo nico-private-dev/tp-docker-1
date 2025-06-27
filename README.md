@@ -197,16 +197,12 @@ Ce service représente un environnement de déploiement **"prod-like"**, à part
 Contrairement au service `desktop`, ici **aucune image préexistante** ne répond à nos besoins.  
 Nous allons donc **construire notre propre image Docker** à l’aide d’un `Dockerfile`.
 
-Ce fichier permettra notamment de :
-
-- Créer un utilisateur (ex. `jenkins`) pouvant se connecter en SSH,
-- Installer les outils nécessaires (`openssh`, `docker-cli`, `git`, etc.),
-- Donner les droits à cet utilisateur pour interagir avec le socket Docker de l’hôte.
+Cette image est fournie un peu plus bas dans la section `🧪 Dockerfile`
 
 ### ⚠️ Pas de mappage de port par défaut
 
 Par souci de sécurité, **aucun port n’est exposé** vers la machine hôte.  
-Cependant, pour déboguer une connexion SSH (ex. via `ssh jenkins@localhost -p 2222`), vous pouvez temporairement ajouter un mappage de port dans le `docker-compose.yml` :
+Cependant, pour déboguer une connexion SSH (ex. via `ssh root@localhost -p 2222`), vous pouvez temporairement ajouter un mappage de port dans le `docker-compose.yml` :
 
 ```yaml
 ports:
@@ -243,7 +239,7 @@ Idéalement nous devrions suivre la procéduire suivante
 
 **Par simplicité et gain de temps**, il vous est fourni un Dockerfile permettant de se connecter en shh avec l'utilisateur `root` et le mot de passe `root`
 
-### 🧪 Dockerfile (à compléter)
+### 🧪 Dockerfile
 
 Voici le Dockerfile de la plateforme à intégrer dans votre `docker-compose.yaml`
 
@@ -287,12 +283,10 @@ sudo apt install ssh
 eval "$(ssh-agent -s)"
 ```
 
-4. Copier le contenu de la clé privée créée à l'étape précédente sur le conteneur "desktop" dans un fichier, par exemple nommé `jenkins`.
-
-5. Vous pouvez maintenant vous connecter sur votre serveur de déploiement :
+1. Vous pouvez maintenant vous connecter sur votre serveur de déploiement :
 
 ```bash
-ssh jenkins@plateforme
+ssh root@plateforme
 ```
 
 _N.B: Vous pouvez utiliser le paramètre `-p 2022` par exemple si vous vous connecter depusi votre machine avec un port forwarding sur le port 2022._
@@ -306,6 +300,25 @@ Installer Jenkins en complétant votre `docker-compose.yaml` en vous appuyant su
 Quelques conseils pour l'installation:
 - Par défaut l'IHM de Jenkins est disponible sur le port `8080`. Je vous conseille de changer le port http en `80`. Vous pouvez utiliser la variable d'environnement suivante : `JENKINS_OPTS=--httpPort=80`
 - Attention, en cas de modification de votre docker-compose.yml, même en recréant les conteneurs votre configuration Jenkins ne sera pas mise à jour. C'est normal et c'est le comportement attendu si vous utilisez un volume. Donc en cas d'erreur de configuration pensez à supprimer votre volume jenkins. 
+
+### Patch pour les webhooks
+
+Créer un fichier `disable-crumbs.groovy` avec le contenu suivant :
+
+```groovy
+// disable-crumbs.groovy
+import jenkins.model.Jenkins
+
+Jenkins.instance.setCrumbIssuer(null)
+println "--> CSRF protection disabled via init script"
+```
+
+Ce script permet de désactiver une vérification de sécurité pour permettre des appels depuis `gitea` plus simple.
+
+Ce fichier doit être placé dans `/usr/share/jenkins/ref/init.groovy.d/` il s'agit d'un répertoire dans lequel les scripts
+groovy présents seront automatiquement exécutés au démarrage de Jenkins.
+
+### Finalisation installation Jenkins
 
 Une fois votre conteneur `running`, rendez-vous sur `http://jenkins`:
 - Dévérouiller jenkins grâce au secret affiché dans les logs de démarrage du conteneur
@@ -331,12 +344,14 @@ hello world !
 Finished: SUCCESS
 ```
 
+---
+
 ## Etape 5: Déploiement du service `gitea`
 
 Installer Gitea en complétant votre `docker-compose.yaml` en vous appuyant sur [la documentation d'installation de gitea](https://docs.gitea.com/category/installation).
 
-Par défaut l'IHM de Gitea est disponible sur le port `3000`. [En vous aidant de cette documentation](https://docs.gitea.com/administration/config-cheat), réaliser les ajustements de configuration afin de :
-- Exposer le service gitea sur le port `80` au lieu de `3000`
+Par défaut l'IHM de Gitea est disponible sur le port `3000`. [En vous aidant de cette documentation](https://docs.gitea.com/administration/config-cheat), au moyen des variables d'environnement, réaliser les ajustements de configuration afin de :
+- Sur le conteneur gitea, exposer le service gitea sur le port `80` au lieu de `3000`
 - Avoir une `ROOT_URL` et `LOCAL_ROOT_URL` égales à `http://gitea`
 - Autoriser à contacter Jenkins via Webhook en créant une variable d'environnement `GITEA__webhook__ALLOWED_HOST_LIST` à `jenkins` 
 
@@ -347,6 +362,8 @@ Lorsque votre service est `UP`, rendez-vous sur `http://gitea`:
 - Importer le [code du webservice score disponible au téléchargement en suivant ce lien github](https://github.com/geomatiq/r408-td3/archive/refs/heads/master.zip). Pour réaliser l'opération depuis un terminal voici la commande de téléchargement : `curl -LJO https://github.com/geomatiq/r408-td3/archive/refs/heads/master.zip`.
 
 Vous préférez utiliser le code d'un de vos projets ? Vous êtes libre de le faire, par contre, en fonction des technos, le support sur la mise en place de votre pipeline sera plus compliqué.
+
+---
 
 ## Etape 6: On branche les fils maintenant ?
 
@@ -409,3 +426,139 @@ pipeline {
 ```
 
 Faire un commit et vérifier la bonne exécution de la pipeline.
+
+---
+
+## Etape 7: Déploiement du jenkins docker agent
+
+### Enrichissement du docker-compose.yml
+
+Nous pourrions installer java sur l'orchestrateur jenkins mais:
+- L'orchestrateur devrait uniquement orchestrer et ne pas exécuter de pipeline
+- Il ne faut pas installer de dépendances applicatives en dur sur les environnements CI/CD.
+
+Nous allons donc déployer un nouveau conteneur en charge d'exécuter les pipelines et disposant de Docker afin que notre application gère elle même son environnement de build dans la ci/cd.
+
+- Utiliser l'image `jenkins/inbound-agent:latest`.
+- Penser à installer avec `apt-get` la dépendance `docker.io`.
+- Valoriser les variables d'environnement suivantes:
+  - `JENKINS_URL`
+  - `JENKINS_AGENT_NAME` # Il s'agit d'une propriété pour identifier l'agent à utiliser dans le Jenkinsfile que vous allez écrire plus tard
+  - `JENKINS_AGENT_WORKDIR` # Définir un répertoire de travail pour l'agent. C'est arbitraire. Eviter simplement la racine.
+  - `JENKINS_SECRET` # Lire les instructions qui suivent
+
+### Enregistrement d'un nouvel agent dans Jenkins
+
+Sur l'interface web de Jenkins:
+  - Aller dans `Manage Jenkins / Nodes / New node`.
+    - Utiliser le même nom que la variable `JENKINS_AGENT_NAME`
+    - Cocher `Permanent agent`
+    - Cliquer sur `create`
+  - Valoriser ensuite ces valeurs:
+    - `labels: docker`
+    - Utiliser le même chemin pour remote root directory que la variable `JENKINS_AGENT_WORKDIR`
+    - Sauvegarder
+  
+Sur la page qui suit vous allez voir des commandes similaires à ça :
+
+```shell
+curl -sO http://jenkins/jnlpJars/agent.jar
+java -jar agent.jar -url http://jenkins/ -secret 0216e32fc39216f5db85bd00665ee4802c2545a53401406ccf6c70732bca0a65 -name test -webSocket -workDir "/home/jenkins/agent"
+```
+
+Conserver consentieusement la valeur du secret, ici `0216e32fc39216f5db85bd00665ee4802c2545a53401406ccf6c70732bca0a65`. Il s'agit de la valeur à renseigner dans la variable d'environnement `JENKINS_SECRET`.
+
+Mettre à jour votre fichier `docker-compose.yaml` puis si nécessaire relancer vos services. 
+
+Vous pouvez vérifier que la connexion s'effectue correctement en vérifiant les logs du conteneur jenkins docker agent. Dans l'interface web de Jenkins, sur la page du nouveau noeud, il doit être écrit `Agent is connected`.
+
+---
+
+## Etape 8: Mise en place de la pipeline CI
+
+Sur Jenkins, aller dans `Gérer Jenkins` et installer le plugin `Docker pipeline`.
+
+Modifier votre fichier Jenkinsfile afin de réaliser la compilation et les tests de votre application java. Nous utilisons un projet avec java 17.
+
+Voici un exemple de Jenkinsfile:
+
+```jenkinsfile
+pipeline {
+    agent {
+        docker {
+            image 'maven:3.9.6-eclipse-temurin-17' // Maven + JDK 17
+            label 'docker-agent'
+        }
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        // TODO: à compléter
+    }
+}
+```
+
+Ici j'ai renseigné un label `docker-agent` car c'est le nom que j'ai défini dans ma configuration à l'étape 7 (Dans la variable `JENKINS_AGENT_NAME`). C'est à adapter en fonction de la votre.
+
+---
+
+## Etape 9: Amélioration de la pipeline pour déployer sur la plateforme
+
+### Ajout d'une étape de construction d'une image docker
+
+Pour l'instant notre pipeline est capable de réaliser le build et les tests de notre application.
+Cela nous permet de vérifier la non régression de notre code.
+Nous souhaitons désormais pouvoir exploiter notre application.
+
+La première étape consiste à réaliser du **Continous Delivery**, à chaque commit nous allons construire notre livrable et le déposer sur un registre pour le rendre accessible.
+
+L'application fournie est une application java avec maven pour gestionnaire de dépendance.
+Pour rappel, nous pouvons générer l'archive java exécutable avec la commande `mvn package`.
+
+-> Vous devez réaliser la conteneurisation de votre application. Pour se faire, rendez-vous dans le dépôt git de votre application, écrivez un `Dockerfile` et rajouter un `stage` dans votre jenkinsfile pour procéder à la construction de votre image avec `docker build`.
+
+_Astuce: Votre Dockerfile doit comporter un environnement ***d'exécution** java (JRE), importer le jar construit par votre pipeline dans le FS de votre image et disposer d'une commande par défaut pour lancer votre application_
+
+_Astuce 2: Appuyez-vous sur la documentation du JRE disponible sur la page Docker Hub de l'image java que vous avez sélectionnée._
+
+### Et maintenant, qu'est-ce que j'en fais de mon image ?
+
+Votre image est construite mais perdue à la fin de chaque job Jenkins. 
+
+Vous devez l'héberger sur un serveur, le registre d'images.
+
+Pour cette exercice, il vous sera proposé une correction avec un registre public sur Docker Hub. Vous pouvez tout à fait utiliser le registre d'images de gitlab.com.
+
+
+
+
+
+---
+
+## Etape 10: Elaboration d'un workflow git
+
+TODO
+
+---
+
+## Etape 11: Implémentation du workflow git dans la CI/CD
+
+TODO
+
+---
+
+## Etape 12: Pour aller plus loin
+
+Vous pouvez réaliser les actions suivantes:
+- Chaque pipeline télécharge systématiquement les dépendances maven. Ce n'est pas environment friendly, ni dev friendly car la durée de vos jobs sont rallongées. Vous pouvez améliorer ceci en conservant le répertoire des dépendances maven (.m2). Jenkins proprose des plugins, sinon vous pouvez utiliser un volume ou montage lié.
+- Déploiement de Sonarquabe + intégrer une analyse SAST dans la pipeline avec quality gate
+- Amélioration de la sécurité (paire de clés, pas de bypass CSRF...)
+
+## Crédit
+
+Maxime LAMBERT - Cours CESI - INF83 - Juin 2025
